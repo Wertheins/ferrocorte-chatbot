@@ -1,0 +1,8 @@
+langchain
+langchain-google-genai
+gspread
+python-dotenv
+langsmith
+streamlit
+pandas
+oauth2client
