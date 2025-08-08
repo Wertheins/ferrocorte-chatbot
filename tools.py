@@ -28,9 +28,8 @@ def buscar_produtos(termo_de_busca: str) -> list:
         
         resultados_com_pontuacao = []
         for produto in produtos:
-            texto_produto = (f"{produto.get('Código', '')} {produto.get('Família / Tipo', '')} {produto.get('Material', '')} "
-                             f"{produto.get('Dimensões (Largura x Comprimento)', '')} {produto.get('Espessura', '')} "
-                             f"{produto.get('Observações / Atributos', '')} {produto.get('Descrição Original', '')}").lower().replace(',', '.')
+            texto_produto = (f"{produto.get('codigo', '')} {produto.get('descricao', '')} "
+                 f"{produto.get('descricao_familia', '')}").lower().replace(',', '.').replace(' x ', 'x')
             score = sum(1 for keyword in keywords if keyword in texto_produto)
             if score > 0:
                 resultados_com_pontuacao.append({'produto': produto, 'score': score})
@@ -67,7 +66,7 @@ def criar_orcamento(codigo_do_produto: str, quantidade: int) -> dict:
         todos_produtos = worksheet.get_all_records()
         produto_para_adicionar = None
         for p in todos_produtos:
-            if str(p.get("Código")) == str(codigo_do_produto):
+            if str(p.get("codigo")) == str(codigo_do_produto):
                 produto_para_adicionar = p
                 break
         
@@ -79,7 +78,7 @@ def criar_orcamento(codigo_do_produto: str, quantidade: int) -> dict:
         orcamento = session_state.get("orcamento_atual") or {"itens": [], "subtotal": 0.0}
         print(f"  [DEBUG] Orçamento ANTES da adição: {orcamento}")
 
-        codigo_pedido = str(produto_para_adicionar.get("Código"))
+        codigo_pedido = str(produto_para_adicionar.get("codigo"))
         item_encontrado_no_orcamento = False
         for item_existente in orcamento["itens"]:
             if item_existente.get("codigo") == codigo_pedido:
@@ -89,11 +88,11 @@ def criar_orcamento(codigo_do_produto: str, quantidade: int) -> dict:
                 break
         
         if not item_encontrado_no_orcamento:
-            preco_unitario = format_price(produto_para_adicionar.get("PreçoMatriz", 0.0))
+            preco_unitario = format_price(produto_para_adicionar.get("valor_unitario", 0.0))
             subtotal_item = preco_unitario * quantidade
             orcamento["itens"].append({
                 "codigo": codigo_pedido, 
-                "produto": produto_para_adicionar.get('Descrição Original'),
+                "produto": produto_para_adicionar.get('descricao'),
                 "quantidade": quantidade, 
                 "preco_unitario": preco_unitario, 
                 "subtotal_item": subtotal_item
