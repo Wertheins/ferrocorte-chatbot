@@ -16,8 +16,8 @@ try:
         # Se não, usa o arquivo local (para rodar na sua máquina)
         gc = gspread.service_account(filename='credentials.json')
 
-    spreadsheet = gc.open("teste")
-    worksheet = spreadsheet.worksheet("Sheet2")
+    spreadsheet = gc.open("Ferrocorte")
+    worksheet = spreadsheet.worksheet("New Report")
     print("Conexão com a planilha bem-sucedida.")
 except Exception as e:
     print(f"Erro fatal ao conectar com o Google Sheets: {e}")
