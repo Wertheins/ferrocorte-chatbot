@@ -1,5 +1,8 @@
+# ferrocorte-chatbot/tools.py
+
 from langchain_core.tools import tool
 from config import worksheet, session_state
+from thefuzz import fuzz # <-- IMPORTANTE: Nova importação
 
 def format_price(value):
     """Função auxiliar para formatar preços para cálculo."""
@@ -12,39 +15,53 @@ def format_price(value):
 
 @tool
 def buscar_produtos(termo_de_busca: str) -> list:
-    """Busca produtos no catálogo. Retorna uma lista de produtos encontrados."""
+    """
+    Busca produtos no catálogo de forma inteligente, lidando com abreviações e erros. 
+    Retorna uma lista de produtos encontrados.
+    """
     print(f"--- TOOL: Buscando produtos por '{termo_de_busca}'... ---")
     try:
         produtos = worksheet.get_all_records()
-        stop_words = ['de', 'da', 'do', 'para', 'com', 'o', 'a', 'e', 'quero', 'gostaria', 'preciso', 'duas', 'peças']
-        termo_de_busca_normalizado = termo_de_busca.lower().replace(',', '.')
-        keywords = [word for word in termo_de_busca_normalizado.split() if word not in stop_words]
-        
-        print(f"  [DEBUG] Keywords extraídas para busca: {keywords}")
+        termo_de_busca_normalizado = termo_de_busca.lower().strip()
 
-        if not keywords: 
+        if not termo_de_busca_normalizado:
             session_state["ultimos_produtos_encontrados"] = []
             return []
-        
+
         resultados_com_pontuacao = []
         for produto in produtos:
-            texto_produto = (f"{produto.get('codigo', '')} {produto.get('descricao', '')} "
-                 f"{produto.get('descricao_familia', '')}").lower().replace(',', '.').replace(' x ', 'x')
-            score = sum(1 for keyword in keywords if keyword in texto_produto)
-            if score > 0:
+            # Combina os campos relevantes do produto para uma busca mais completa
+            texto_produto = (f"{produto.get('descricao', '')} "
+                             f"{produto.get('descricao_familia', '')}").lower().strip()
+
+            if not texto_produto:
+                continue
+            
+            # A MÁGICA ACONTECE AQUI:
+            # Usamos 'partial_ratio' para encontrar a melhor correspondência parcial.
+            # Isso é ótimo para abreviações ("galv" vs "galvanizada") e erros.
+            score = fuzz.partial_ratio(termo_de_busca_normalizado, texto_produto)
+            
+            # Damos um bônus se a busca do usuário for o início exato de uma palavra no produto
+            # Isso ajuda a priorizar resultados mais diretos para buscas curtas como "chapa".
+            if texto_produto.startswith(termo_de_busca_normalizado):
+                 score += 10
+
+            if score > 75: # Define um "corte" de relevância. Só considera produtos com score acima de 75.
                 resultados_com_pontuacao.append({'produto': produto, 'score': score})
         
         if not resultados_com_pontuacao:
-            print("  [DEBUG] Nenhum produto encontrado com a busca.")
+            print("  [DEBUG] Nenhum produto encontrado com a busca inteligente.")
             session_state["ultimos_produtos_encontrados"] = []
             return []
         
+        # Ordena os resultados pela pontuação, do maior para o menor
         resultados_ordenados = sorted(resultados_com_pontuacao, key=lambda x: x['score'], reverse=True)
-        maior_pontuacao = resultados_ordenados[0]['score']
-        melhores_resultados = [r['produto'] for r in resultados_ordenados if r['score'] == maior_pontuacao]
         
-        print(f"  [DEBUG] Melhores resultados encontrados (códigos): {[item.get('Código') for item in melhores_resultados]}")
+        # Pega os 5 melhores resultados para não sobrecarregar o agente com muitas opções.
+        melhores_resultados = [r['produto'] for r in resultados_ordenados][:5]
         
+        print(f"  [DEBUG] Melhores resultados (códigos): {[item.get('codigo') for item in melhores_resultados]}")
         session_state["ultimos_produtos_encontrados"] = melhores_resultados
         
         print(f"  [DEBUG] Retornando para o agente: {melhores_resultados}")
@@ -62,7 +79,6 @@ def criar_orcamento(codigo_do_produto: str, quantidade: int) -> dict:
     """
     print(f"--- TOOL: Adicionando {quantidade} item(ns) do código '{codigo_do_produto}' ao orçamento... ---")
     try:
-        # A ferramenta agora busca o produto por código, garantindo a seleção correta.
         todos_produtos = worksheet.get_all_records()
         produto_para_adicionar = None
         for p in todos_produtos:
@@ -73,7 +89,7 @@ def criar_orcamento(codigo_do_produto: str, quantidade: int) -> dict:
         if not produto_para_adicionar:
             return {"erro": f"Produto com código '{codigo_do_produto}' não encontrado no catálogo."}
 
-        print(f"  [DEBUG] Produto selecionado para adicionar: {produto_para_adicionar.get('Descrição Original')}")
+        print(f"  [DEBUG] Produto selecionado para adicionar: {produto_para_adicionar.get('descricao')}")
 
         orcamento = session_state.get("orcamento_atual") or {"itens": [], "subtotal": 0.0}
         print(f"  [DEBUG] Orçamento ANTES da adição: {orcamento}")
@@ -119,7 +135,6 @@ def atualizar_quantidade_item(codigo_do_produto: str, nova_quantidade: int) -> d
     
     item_encontrado = False
     for item in orcamento["itens"]:
-        # Garantir a comparação correta entre os tipos de dados do código
         if str(item.get("codigo")) == str(codigo_do_produto):
             item["quantidade"] = nova_quantidade
             item["subtotal_item"] = item["preco_unitario"] * nova_quantidade

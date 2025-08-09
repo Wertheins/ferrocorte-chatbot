@@ -6,3 +6,5 @@ langsmith
 streamlit
 pandas
 oauth2client
+thefuzz
+python-Levenshtein
