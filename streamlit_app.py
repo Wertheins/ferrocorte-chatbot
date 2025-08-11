@@ -29,7 +29,6 @@ for message in st.session_state.chat_history:
             st.write(message.content)
 
 # --- Lógica de Interação ---
-# A CORREÇÃO ESTÁ AQUI: Adicionamos o argumento 'key'
 user_prompt = st.chat_input("Descreva o produto que você precisa...", key="user_chat_input")
 
 if user_prompt:
@@ -42,8 +41,10 @@ if user_prompt:
     if st.session_state.awaiting_refinement:
         with st.chat_message("AI", avatar="🤖"):
             with st.spinner("Confirmando sua seleção..."):
-                buscar_produtos(termo_de_busca=user_prompt)
+                # A CORREÇÃO FINAL ESTÁ AQUI: usamos .invoke()
+                buscar_produtos.invoke({"termo_de_busca": user_prompt})
                 
+                # A lógica abaixo não muda
                 produto_encontrado = session_state.get("ultimos_produtos_encontrados", [{}])[0]
                 nome_produto = produto_encontrado.get("descricao", "O produto selecionado")
 
