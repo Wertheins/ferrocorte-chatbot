@@ -2,16 +2,15 @@ from langchain_core.messages import AIMessage, HumanMessage
 # Importa o executor do agente, como antes
 from agent import master_agent_executor
 # Novas importações necessárias para a memória
-from langchain.memory import ConversationSummaryBufferMemory
+from langchain.memory import ConversationBufferWindowMemory
 from config import llm
 
 # --- INICIALIZAÇÃO DA MEMÓRIA INTELIGENTE ---
 # Em vez de uma lista vazia, agora temos um objeto de memória inteligente.
 # Ele usará o mesmo LLM para criar os resumos.
-memory = ConversationSummaryBufferMemory(
-    llm=llm,
-    max_token_limit=4000, # Limite de tokens para o histórico. Acima disso, ele resume.
-    memory_key="chat_history", # O nome da variável que o prompt espera
+memory = ConversationBufferWindowMemory(
+    k=10, # Mantém as últimas 5 trocas (pergunta/resposta). Ajuste conforme necessário.
+    memory_key="chat_history",
     return_messages=True
 )
 

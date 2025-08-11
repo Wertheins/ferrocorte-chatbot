@@ -72,29 +72,29 @@ def buscar_produtos(termo_de_busca: str) -> list:
         return []
 
 @tool
-def criar_orcamento(codigo_do_produto: str, quantidade: int) -> dict:
+def criar_orcamento(quantidade: int) -> str:
     """
-    Adiciona um produto específico e sua quantidade ao orçamento usando seu código.
-    Use esta função DEPOIS que o cliente confirmar o produto e a quantidade.
+    Adiciona o produto MAIS RECENTEMENTE encontrado ao orçamento e retorna uma mensagem de confirmação para o cliente.
+    Use esta ferramenta IMEDIATAMENTE após o cliente confirmar a quantidade de um item que foi isolado pela busca.
+    A ferramenta adiciona o item e prepara a próxima pergunta para o cliente.
     """
-    print(f"--- TOOL: Adicionando {quantidade} item(ns) do código '{codigo_do_produto}' ao orçamento... ---")
+    print(f"--- TOOL: Adicionando {quantidade} item(ns) e preparando a resposta de confirmação... ---")
+    
+    ultimos_encontrados = session_state.get("ultimos_produtos_encontrados")
+    if not ultimos_encontrados or len(ultimos_encontrados) != 1:
+        return "Desculpe, parece que perdi o contexto do produto que estávamos falando. Poderíamos começar a busca por este item novamente?"
+    
+    produto_para_adicionar = ultimos_encontrados[0]
+    descricao_produto = produto_para_adicionar.get('descricao', 'Produto selecionado')
+
     try:
-        todos_produtos = worksheet.get_all_records()
-        produto_para_adicionar = None
-        for p in todos_produtos:
-            if str(p.get("codigo")) == str(codigo_do_produto):
-                produto_para_adicionar = p
-                break
-        
-        if not produto_para_adicionar:
-            return {"erro": f"Produto com código '{codigo_do_produto}' não encontrado no catálogo."}
-
-        print(f"  [DEBUG] Produto selecionado para adicionar: {produto_para_adicionar.get('descricao')}")
-
+        # Lógica de adição ao orçamento (a mesma de antes)
         orcamento = session_state.get("orcamento_atual") or {"itens": [], "subtotal": 0.0}
-        print(f"  [DEBUG] Orçamento ANTES da adição: {orcamento}")
-
         codigo_pedido = str(produto_para_adicionar.get("codigo"))
+        
+        # ... (a lógica interna para adicionar ou atualizar a quantidade no orcamento["itens"] continua a mesma) ...
+        # [COPIE E COLE A LÓGICA DE DENTRO DO SEU 'try' ANTERIOR AQUI]
+        # Vou reescrevê-la para garantir:
         item_encontrado_no_orcamento = False
         for item_existente in orcamento["itens"]:
             if item_existente.get("codigo") == codigo_pedido:
@@ -108,7 +108,7 @@ def criar_orcamento(codigo_do_produto: str, quantidade: int) -> dict:
             subtotal_item = preco_unitario * quantidade
             orcamento["itens"].append({
                 "codigo": codigo_pedido, 
-                "produto": produto_para_adicionar.get('descricao'),
+                "produto": descricao_produto,
                 "quantidade": quantidade, 
                 "preco_unitario": preco_unitario, 
                 "subtotal_item": subtotal_item
@@ -116,11 +116,13 @@ def criar_orcamento(codigo_do_produto: str, quantidade: int) -> dict:
         
         orcamento["subtotal"] = sum(item['subtotal_item'] for item in orcamento['itens'])
         session_state["orcamento_atual"] = orcamento
-        print(f"  [DEBUG] Orçamento DEPOIS da adição (salvo na sessão): {orcamento}")
-        return orcamento
+        
+        # A MÁGICA ESTÁ AQUI: a ferramenta retorna a próxima fala do bot
+        return f"Adicionado: {quantidade} unidade(s) de '{descricao_produto}'. Seu subtotal agora é de R$ {orcamento['subtotal']:.2f}. Deseja adicionar mais algum item ou podemos finalizar o pedido?"
+
     except Exception as e:
         print(f"Erro em criar_orcamento: {e}")
-        return {"erro": str(e)}
+        return f"Ocorreu um erro ao tentar adicionar o item: {e}. Por favor, tente novamente."
 
 @tool
 def atualizar_quantidade_item(codigo_do_produto: str, nova_quantidade: int) -> dict:
