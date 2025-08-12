@@ -2,11 +2,7 @@
 
 import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage
-
-# Importe não apenas o executor, mas também a ferramenta que vamos chamar diretamente
 from agent import master_agent_executor
-from tools import buscar_produtos
-from config import session_state
 
 # --- Configuração da Página ---
 st.set_page_config(page_title="Chatbot Ferrocorte Industrial", page_icon="🤖")
@@ -14,10 +10,11 @@ st.title("🤖 Assistente de Vendas Ferrocorte")
 st.caption("Olá! Sou seu assistente virtual. Me diga qual produto você precisa e montarei seu orçamento.")
 
 # --- Inicialização do Estado da Sessão ---
+# A única coisa que precisamos guardar é o histórico do chat para exibi-lo.
 if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-if "awaiting_refinement" not in st.session_state:
-    st.session_state.awaiting_refinement = False
+    st.session_state.chat_history = [
+        AIMessage(content="Olá! Sou seu assistente de vendas da Ferrocorte. Como posso te ajudar hoje?")
+    ]
 
 # --- Exibe o histórico do chat ---
 for message in st.session_state.chat_history:
@@ -29,7 +26,7 @@ for message in st.session_state.chat_history:
             st.write(message.content)
 
 # --- Lógica de Interação ---
-user_prompt = st.chat_input("Descreva o produto que você precisa...", key="user_chat_input")
+user_prompt = st.chat_input("Descreva o produto ou responda...", key="user_chat_input")
 
 if user_prompt:
     # Adiciona a mensagem do usuário à UI e ao histórico
@@ -37,38 +34,21 @@ if user_prompt:
     with st.chat_message("Human", avatar="👤"):
         st.write(user_prompt)
 
-    # --- O ORQUESTRADOR LÓGICO ---
-    if st.session_state.awaiting_refinement:
-        with st.chat_message("AI", avatar="🤖"):
-            with st.spinner("Confirmando sua seleção..."):
-                # A CORREÇÃO FINAL ESTÁ AQUI: usamos .invoke()
-                buscar_produtos.invoke({"termo_de_busca": user_prompt})
-                
-                # A lógica abaixo não muda
-                produto_encontrado = session_state.get("ultimos_produtos_encontrados", [{}])[0]
-                nome_produto = produto_encontrado.get("descricao", "O produto selecionado")
+    # A interface agora é muito mais simples.
+    # Ela apenas invoca o agente e espera a resposta.
+    # Toda a lógica de "o que fazer agora" está dentro do agente.
+    with st.chat_message("AI", avatar="🤖"):
+        with st.spinner("Pensando..."):
+            # O agente agora recebe o histórico de chat completo para ter contexto
+            response = master_agent_executor.invoke({
+                "input": user_prompt,
+                "chat_history": st.session_state.chat_history
+            })
+            ai_response = response['output']
+            st.write(ai_response)
 
-                ai_response = f"Ok, produto selecionado: **{nome_produto}**. Quantas unidades você precisa?"
-                st.write(ai_response)
+    # Adiciona a resposta do agente ao histórico para a próxima rodada
+    st.session_state.chat_history.append(AIMessage(content=ai_response))
 
-        st.session_state.chat_history.append(AIMessage(content=ai_response))
-        st.session_state.awaiting_refinement = False
-
-    # --- FLUXO NORMAL DO AGENTE ---
-    else:
-        with st.chat_message("AI", avatar="🤖"):
-            with st.spinner("Analisando seu pedido..."):
-                response = master_agent_executor.invoke({
-                    "input": user_prompt,
-                    "chat_history": st.session_state.chat_history
-                })
-                ai_response = response['output']
-                st.write(ai_response)
-
-        st.session_state.chat_history.append(AIMessage(content=ai_response))
-
-        ultimos_produtos = session_state.get("ultimos_produtos_encontrados", [])
-        if len(ultimos_produtos) > 1:
-            st.session_state.awaiting_refinement = True
-        else:
-            st.session_state.awaiting_refinement = False
+    # Força a UI a rolar para a última mensagem
+    st.rerun()
