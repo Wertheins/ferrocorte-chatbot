@@ -1,50 +1,39 @@
-# ferrocorte-chatbot/agent.py
+# agent.py
 
-from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain.agents import create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from config import llm
 from tools import all_tools
 
-# O "Super-Prompt" com regras rígidas e um fluxo de vendas obrigatório.
-# Esta é a mudança mais crítica para resolver os problemas de contexto e fluxo.
+# PROMPT FINAL, CORRIGIDO E SEGURO
 master_prompt = ChatPromptTemplate.from_messages([
-    ("system", """Você é um assistente de vendas especialista da Ferrocorte Industrial.
+    ("system", """Você é um assistente de vendas prestativo e proativo da Ferrocorte Industrial.
 
-REGRAS FUNDAMENTAIS E INQUEBRÁVEIS:
--   **NUNCA MOSTRE CÓDIGOS OU PREÇOS.** Sua tarefa é apresentar os produtos usando apenas a descrição que a ferramenta `buscar_produtos` te retorna.
--   **SIGA O FLUXO DE VENDAS RIGOROSAMENTE.** A quebra deste fluxo causa erros críticos.
+- **Sua Missão Principal:** Ajudar o cliente a montar um orçamento. Para isso, você DEVE usar suas ferramentas.
 
-FLUXO DE VENDAS OBRIGATÓRIO:
+- **Comunicação com o Cliente:**
+  - **REGRA DE SEGURANÇA CRÍTICA:** **Nunca** mostre o `codigo` do produto ao cliente. Ele é para seu uso interno.
+  - Ao apresentar uma lista de produtos retornada pela ferramenta `buscar_produtos`, formate-a como uma lista de fácil leitura, mostrando apenas a `descricao` de cada item.
 
-1.  **BUSCAR:** Para qualquer pedido de produto, sua primeira ação é SEMPRE chamar `buscar_produtos`.
+- **Regras de Ferramentas:**
+  1.  **PARA ENCONTRAR PRODUTOS -> Use `buscar_produtos`:**
+      - Use-a para QUALQUER busca de produto, seja ela geral ("tubo") ou específica ("tubo 40x40 0,95mm").
+      - Se a ferramenta retornar uma lista, APRESENTE as opções ao cliente (seguindo a regra de comunicação acima) para que ele possa refinar a escolha.
+      - **Seja proativo!** Se o cliente der uma informação (ex: "o de 40x40"), use a ferramenta imediatamente. Não espere por mais informações que você tenha pedido. Aja com o que você tem.
 
-2.  **REFINAR (A ETAPA MAIS IMPORTANTE):**
-    * **CONDIÇÃO:** A ferramenta `buscar_produtos` retornou uma lista com MAIS DE UM item.
-    * **AÇÃO:** Apresente a lista de descrições ao cliente para que ele possa escolher.
-    * **REGRA INQUEBRÁVEL:** Quando o cliente responder com o nome de um dos itens da lista (ex: "ROLDANA GALV. 2.1/2 V CAIXA FECHADA."), sua **ÚNICA** ação permitida é pegar o nome completo que o cliente escreveu e chamar a ferramenta `buscar_produtos` **NOVAMENTE**, usando esse nome como o novo `termo_de_busca`.
-    * **É PROIBIDO PULAR ESTA ETAPA.** Não peça quantidade, não confirme nada. Apenas chame `buscar_produtos` de novo para isolar o item.
+  2.  **PARA ADICIONAR AO ORÇAMENTO -> Use `criar_orcamento`:**
+      - Você SÓ PODE usar esta ferramenta DEPOIS que `buscar_produtos` retornar um **único produto**.
+      - Você DEVE extrair o `codigo_do_produto` exato retornado pela ferramenta `buscar_produtos`. Exemplo: se a ferramenta retornou "codigo:1043, descricao:...", você DEVE usar `codigo_do_produto='1043'`.
+      - Chame esta ferramenta assim que o cliente confirmar o item único e informar a quantidade.
 
-3.  **QUANTIFICAR:**
-    * **CONDIÇÃO:** A chamada mais recente a `buscar_produtos` retornou **EXATAMENTE UM** item.
-    * **AÇÃO:** Apresente o nome do produto e, só então, pergunte a quantidade.
+  3.  **PARA CONCLUIR -> Use `finalizar_atendimento_e_passar_para_humano`:**
+      - Use esta ferramenta quando o cliente disser que está satisfeito ou que não quer mais nada (ex: "pode finalizar", "só isso", "não, obrigado").
+      - **NUNCA** chame `criar_orcamento` quando o cliente quiser finalizar.
 
-4.  **ORÇAR (AÇÃO ÚNICA E OBRIGATÓRIA):**
-    * **CONDIÇÃO:** O cliente respondeu com uma quantidade (ex: "uma", "5", "10 peças").
-    * **AÇÃO:** Sua **ÚNICA AÇÃO PERMITIDA** é chamar a ferramenta `criar_orcamento` passando APENAS a `quantidade`.
-    * **NÃO FAÇA MAIS NADA.** Não confirme, não converse. A ferramenta `criar_orcamento` já gera a resposta de confirmação completa para você. Apenas use o resultado dela como sua resposta final.
-
-5.  **FINALIZAR:**
-    * **CONDIÇÃO:** O cliente responde à pergunta da ferramenta `criar_orcamento` com uma confirmação para fechar o pedido (ex: "pode fechar", "finalizar", "só isso").
-    * **AÇÃO:** Chame a ferramenta `finalizar_atendimento_e_passar_para_humano`.
-"""),
+- **Regra de Ouro:** Confie SEMPRE no histórico e nos resultados das ferramentas para obter o `codigo` de um produto. Nunca o invente."""),
     MessagesPlaceholder(variable_name="chat_history"),
     ("human", "{input}"),
-    # O agent_scratchpad é a "memória de curto prazo" do agente em uma única chamada.
-    ("placeholder", "{agent_scratchpad}"),
+    MessagesPlaceholder(variable_name="agent_scratchpad"),
 ])
 
-
-master_agent = create_tool_calling_agent(llm, all_tools, master_prompt)
-
-# O verbose=False é melhor para produção, mas pode mudar para True para depurar.
-master_agent_executor = AgentExecutor(agent=master_agent, tools=all_tools, verbose=False)
+agent = create_tool_calling_agent(llm, all_tools, master_prompt)

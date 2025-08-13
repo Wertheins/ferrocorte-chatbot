@@ -1,77 +1,81 @@
 # streamlit_app.py
 
 import streamlit as st
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.agents import AgentFinish
 
-# Importamos o executor e a variável de estado que as ferramentas usam
-from agent import master_agent_executor
-from config import session_state # <-- Importação crucial
+# É crucial importar o 'app' do seu grafo.
+# O Streamlit executará os arquivos importados, inicializando o LLM,
+# a conexão com a planilha e compilando o grafo uma única vez.
+from graph import app
 
-# --- Configuração da Página ---
-st.set_page_config(page_title="Chatbot Ferrocorte Industrial", page_icon="🤖")
+# --- Configuração da Página e Estado da Sessão ---
+
+st.set_page_config(page_title="🤖 Assistente Ferrocorte", page_icon="🤖")
 st.title("🤖 Assistente de Vendas Ferrocorte")
-st.caption("Olá! Sou seu assistente virtual. Me diga qual produto você precisa e montarei seu orçamento.")
+st.caption("Um chatbot para cotação de produtos siderúrgicos.")
 
-# --- Inicialização do Estado da Sessão ---
-# Usamos o st.session_state, que é a forma correta de guardar dados no Streamlit
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = [
-        AIMessage(content="Olá! Sou seu assistente de vendas da Ferrocorte. Como posso te ajudar hoje?")
+# Função para reiniciar a conversa
+def reset_conversation():
+    st.session_state.messages = [
+        AIMessage(content="Olá! Bem-vindo(a) à Ferrocorte Industrial. Como posso te ajudar hoje?")
     ]
-if "orcamento_atual" not in st.session_state:
-    st.session_state.orcamento_atual = None
-if "ultimos_produtos_encontrados" not in st.session_state:
-    st.session_state.ultimos_produtos_encontrados = []
+    st.session_state.session_ended = False
 
+# Adiciona um botão na barra lateral para iniciar um novo chat
+st.sidebar.button("Nova Cotação", on_click=reset_conversation, use_container_width=True)
 
-# --- Exibe o histórico do chat ---
-for message in st.session_state.chat_history:
+# Inicializa o estado da sessão se ainda não existir
+if "messages" not in st.session_state:
+    reset_conversation()
+
+# --- Lógica da Interface do Chat ---
+
+# Exibe as mensagens do histórico
+for message in st.session_state.messages:
     if isinstance(message, AIMessage):
-        with st.chat_message("AI", avatar="🤖"):
-            st.write(message.content)
+        with st.chat_message("assistant", avatar="🤖"):
+            st.markdown(message.content)
     elif isinstance(message, HumanMessage):
-        with st.chat_message("Human", avatar="👤"):
-            st.write(message.content)
+        with st.chat_message("user", avatar="👤"):
+            st.markdown(message.content)
 
-# --- Lógica de Interação ---
-user_prompt = st.chat_input("Descreva o produto ou responda...", key="user_chat_input")
+# Campo de input para o usuário, desabilitado se a sessão terminou
+if prompt := st.chat_input("Sua mensagem...", disabled=st.session_state.session_ended):
+    # Adiciona e exibe a mensagem do usuário
+    st.session_state.messages.append(HumanMessage(content=prompt))
+    with st.chat_message("user", avatar="👤"):
+        st.markdown(prompt)
 
-if user_prompt:
-    st.session_state.chat_history.append(HumanMessage(content=user_prompt))
-    with st.chat_message("Human", avatar="👤"):
-        st.write(user_prompt)
+    # Mostra um "spinner" enquanto o bot está processando
+    with st.chat_message("assistant", avatar="🤖"):
+        with st.spinner("Analisando seu pedido..."):
+            # Define o estado inicial para esta chamada do grafo
+            # O histórico precisa ser o estado atual da sessão
+            initial_state = {
+                "input": prompt,
+                "chat_history": st.session_state.messages[:-1], # Passa todo o histórico, exceto a última mensagem do usuário
+            }
 
-    with st.chat_message("AI", avatar="🤖"):
-        with st.spinner("Pensando..."):
-            # ==================================================================
-            # A CORREÇÃO CRÍTICA ESTÁ AQUI: SINCRONIZAÇÃO DE ESTADO
-            # ==================================================================
+            # Executa o grafo
+            final_state = app.invoke(initial_state)
 
-            # 1. CARREGAR ESTADO: Antes de rodar, damos às ferramentas a memória
-            #    salva na sessão do Streamlit.
-            session_state["orcamento_atual"] = st.session_state.orcamento_atual
-            session_state["ultimos_produtos_encontrados"] = st.session_state.ultimos_produtos_encontrados
+            # Extrai a resposta final (mesma lógica do seu main.py)
+            agent_outcome = final_state.get("agent_outcome")
+            if isinstance(agent_outcome, AgentFinish):
+                final_response_text = agent_outcome.return_values["output"]
+            else:
+                # Caso de segurança
+                final_response_text = "Desculpe, ocorreu um erro inesperado. Por favor, tente novamente."
 
-            # Invoca o agente com o input e o histórico
-            response = master_agent_executor.invoke({
-                "input": user_prompt,
-                "chat_history": st.session_state.chat_history
-            })
-            ai_response = response['output']
+            # Exibe a resposta do bot
+            st.markdown(final_response_text)
 
-            # 2. SALVAR ESTADO: Depois que o agente roda, salvamos qualquer
-            #    mudança de volta na sessão do Streamlit para a próxima rodada.
-            st.session_state.orcamento_atual = session_state["orcamento_atual"]
-            st.session_state.ultimos_produtos_encontrados = session_state["ultimos_produtos_encontrados"]
+    # Adiciona a resposta do bot ao histórico
+    st.session_state.messages.append(AIMessage(content=final_response_text))
 
-            # ==================================================================
-            # FIM DA CORREÇÃO
-            # ==================================================================
-
-            st.write(ai_response)
-
-    # Adiciona a resposta final ao histórico do chat
-    st.session_state.chat_history.append(AIMessage(content=ai_response))
-
-    # Força o rerender da página para mostrar a última mensagem
-    st.rerun()
+    # Verifica se a conversa deve ser encerrada
+    if "um de nossos consultores já te retorna" in final_response_text:
+        st.session_state.session_ended = True
+        st.info("Sessão de cotação finalizada. Para iniciar uma nova, clique em 'Nova Cotação' na barra lateral.")
+        st.rerun() # Força o re-render para desabilitar o input

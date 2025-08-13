@@ -1,11 +1,18 @@
-# ferrocorte-chatbot/tools.py
+# tools.py
 
 from langchain_core.tools import tool
 from config import worksheet, session_state
-from thefuzz import fuzz # <-- IMPORTANTE: Nova importação
+from thefuzz import fuzz
+import re
+
+# Colunas (sem alteração)
+COLUNA_CODIGO = "codigo"
+COLUNA_DESCRICAO = "descricao"
+COLUNA_FAMILIA = "descricao_familia"
+COLUNA_VALOR = "valor_unitario"
 
 def format_price(value):
-    """Função auxiliar para formatar preços para cálculo."""
+    # (sem alteração)
     if isinstance(value, str):
         value = value.replace("R$", "").strip().replace(".", "").replace(",", ".")
     try:
@@ -14,176 +21,147 @@ def format_price(value):
         return 0.0
 
 @tool
-def buscar_produtos(termo_de_busca: str) -> list:
+def buscar_produtos(termo_de_busca: str) -> str:
     """
-    Busca produtos no catálogo de forma inteligente.
-    Retorna uma lista de descrições dos produtos encontrados.
+    Busca produtos no catálogo. Essencial para encontrar produtos e seus códigos.
+    Use para buscas gerais e para refinar uma busca. A busca é refinada até que esta ferramenta retorne um único produto.
     """
     print(f"--- TOOL: Buscando produtos por '{termo_de_busca}'... ---")
+    
     try:
         produtos = worksheet.get_all_records()
+        print(f"  [DEBUG] {len(produtos)} registros lidos da planilha.")
+        
         termo_de_busca_normalizado = termo_de_busca.lower().strip()
-
-        if not termo_de_busca_normalizado:
-            session_state["ultimos_produtos_encontrados"] = []
-            return []
-
+        query_words = set(re.sub(r'[^\w\s]', '', termo_de_busca_normalizado).split())
+        
         resultados_com_pontuacao = []
         for produto in produtos:
-            # Combina os campos relevantes do produto para uma busca mais completa
-            texto_produto = (f"{produto.get('descricao', '')} "
-                             f"{produto.get('descricao_familia', '')}").lower().strip()
-            if not texto_produto:
+            descricao_principal = str(produto.get(COLUNA_DESCRICAO, '')).lower().strip()
+            familia = str(produto.get(COLUNA_FAMILIA, '')).lower().strip()
+            texto_produto_completo = f"{descricao_principal} {familia}"
+            
+            product_words = set(re.sub(r'[^\w\s]', '', texto_produto_completo).split())
+            
+            todas_palavras_correspondem = True
+            for query_word in query_words:
+                match_found = False
+                for product_word in product_words:
+                    if query_word.startswith(product_word) or product_word.startswith(query_word):
+                        match_found = True
+                        break
+                if not match_found:
+                    todas_palavras_correspondem = False
+                    break
+            
+            if not todas_palavras_correspondem:
                 continue
-
-            # Usamos partial_ratio que é ótimo para encontrar substrings
-            score = fuzz.partial_ratio(termo_de_busca_normalizado, texto_produto)
-
-            # Damos um bônus se o texto do produto começar com o termo de busca
-            # Isso ajuda a priorizar resultados mais diretos
-            if texto_produto.startswith(termo_de_busca_normalizado):
-                 score += 10 # Bônus de 10 pontos
-
-            # Aumentamos o limiar de corte para 75 para garantir relevância
-            if score > 75:
-                resultados_com_pontuacao.append({'produto': produto, 'score': score})
+                
+            score = fuzz.token_set_ratio(termo_de_busca_normalizado, descricao_principal)
+            resultados_com_pontuacao.append({'produto': produto, 'score': score})
 
         if not resultados_com_pontuacao:
-            session_state["ultimos_produtos_encontrados"] = []
-            return []
+            return "Nenhum produto encontrado com esses termos."
 
-        # Ordena os resultados pela pontuação (maior primeiro)
+        # --- LÓGICA DE RETORNO CORRIGIDA ---
+        # Se a busca filtrou para APENAS UM resultado, é uma correspondência exata.
+        if len(resultados_com_pontuacao) == 1:
+            produto_isolado = resultados_com_pontuacao[0]['produto']
+            codigo = produto_isolado.get(COLUNA_CODIGO, "N/A")
+            descricao = produto_isolado.get(COLUNA_DESCRICAO, "N/A")
+            string_de_retorno = f"codigo:{codigo}, descricao:{descricao}"
+            print(f"  [DEBUG] Busca resultou em 1 item. Retornando para o agente:\n{string_de_retorno}")
+            return string_de_retorno
+
+        # Se houver múltiplos resultados, ordena por relevância e retorna uma lista para o agente escolher.
         resultados_ordenados = sorted(resultados_com_pontuacao, key=lambda x: x['score'], reverse=True)
-
-        # Pega os 5 melhores resultados
-        melhores_resultados_completos = [r['produto'] for r in resultados_ordenados][:5]
-
-        # ATUALIZAÇÃO IMPORTANTE: Salvamos a informação completa na sessão...
-        session_state["ultimos_produtos_encontrados"] = melhores_resultados_completos
-
-        # ...MAS RETORNAMOS PARA O AGENTE APENAS A DESCRIÇÃO!
-        # Isso economiza tokens e força o agente a trabalhar com a informação que damos.
-        descricoes_para_agente = [item.get('descricao') for item in melhores_resultados_completos]
-
-        print(f"  [DEBUG] Retornando APENAS as descrições para o agente: {descricoes_para_agente}")
-        return descricoes_para_agente
+        melhores_resultados = [r['produto'] for r in resultados_ordenados][:7] # Aumentado o limite para 7
+        resultados_formatados = []
+        for item in melhores_resultados:
+            codigo = item.get(COLUNA_CODIGO, "N/A")
+            descricao = item.get(COLUNA_DESCRICAO, "N/A")
+            resultados_formatados.append(f"codigo:{codigo}, descricao:{descricao}")
+        
+        string_de_retorno = "\n".join(resultados_formatados)
+        print(f"  [DEBUG] Busca resultou em múltiplos itens. Retornando lista para o agente:\n{string_de_retorno}")
+        return string_de_retorno
     except Exception as e:
         print(f"Erro em buscar_produtos: {e}")
-        session_state["ultimos_produtos_encontrados"] = []
-        return []
+        return f"Erro interno na ferramenta de busca: {e}"
 
 @tool
-def criar_orcamento(quantidade: int) -> str:
+def criar_orcamento(codigo_do_produto: str, quantidade: int) -> str:
     """
-    Adiciona o produto MAIS RECENTEMENTE encontrado ao orçamento e retorna uma mensagem de confirmação para o cliente.
-    Use esta ferramenta IMEDIATAMENTE após o cliente confirmar a quantidade de um item que foi isolado pela busca.
-    A ferramenta adiciona o item e prepara a próxima pergunta para o cliente.
+    Adiciona um produto com um 'codigo_do_produto' específico e uma 'quantidade' ao orçamento.
+    Use esta ferramenta SOMENTE após ter um código de produto único da ferramenta 'buscar_produtos'.
     """
-    print(f"--- TOOL: Adicionando {quantidade} item(ns) e preparando a resposta de confirmação... ---")
-
-    ultimos_encontrados = session_state.get("ultimos_produtos_encontrados")
-
-    # Esta verificação é crucial. O erro que você via acontecia porque o agente
-    # se perdia e esta lista não continha exatamente 1 item.
-    if not ultimos_encontrados or len(ultimos_encontrados) != 1:
-        return "Desculpe, parece que perdi o contexto do produto que estávamos falando. Poderíamos começar a busca por este item novamente?"
-
-    produto_para_adicionar = ultimos_encontrados[0]
-    descricao_produto = produto_para_adicionar.get('descricao', 'Produto selecionado')
-
+    print(f"--- TOOL: Adicionando produto CÓDIGO '{codigo_do_produto}' (Qtd: {quantidade}) ao orçamento... ---")
+    
     try:
+        # Busca o produto pelo código na planilha (muito mais confiável)
+        produtos = worksheet.get_all_records()
+        produto_para_adicionar = None
+        for produto in produtos:
+            # Garante que a comparação seja feita com strings para evitar erros de tipo
+            if str(produto.get(COLUNA_CODIGO)).strip() == str(codigo_do_produto).strip():
+                produto_para_adicionar = produto
+                break
+        
+        if not produto_para_adicionar:
+            return f"Erro: O produto com o código '{codigo_do_produto}' não foi encontrado no catálogo."
+            
+        print(f"  [DEBUG] Produto encontrado pelo código: {produto_para_adicionar.get(COLUNA_DESCRICAO)}")
+        descricao_produto = produto_para_adicionar.get(COLUNA_DESCRICAO, 'Produto selecionado')
         orcamento = session_state.get("orcamento_atual") or {"itens": [], "subtotal": 0.0}
-        codigo_pedido = str(produto_para_adicionar.get("codigo"))
-
+        
         item_encontrado_no_orcamento = False
         for item_existente in orcamento["itens"]:
-            if item_existente.get("codigo") == codigo_pedido:
-                item_existente["quantidade"] += quantidade
+            if item_existente.get("codigo") == codigo_do_produto:
+                item_existente["quantidade"] += int(quantidade)
                 item_existente["subtotal_item"] = item_existente["preco_unitario"] * item_existente["quantidade"]
                 item_encontrado_no_orcamento = True
                 break
-
+        
         if not item_encontrado_no_orcamento:
-            preco_unitario = format_price(produto_para_adicionar.get("valor_unitario", 0.0))
-            subtotal_item = preco_unitario * quantidade
+            preco_unitario = format_price(produto_para_adicionar.get(COLUNA_VALOR, 0.0))
+            int_quantidade = int(quantidade)
+            subtotal_item = preco_unitario * int_quantidade
             orcamento["itens"].append({
-                "codigo": codigo_pedido,
+                "codigo": codigo_do_produto, 
                 "produto": descricao_produto,
-                "quantidade": quantidade,
-                "preco_unitario": preco_unitario,
+                "quantidade": int_quantidade, 
+                "preco_unitario": preco_unitario, 
                 "subtotal_item": subtotal_item
             })
-
+        
         orcamento["subtotal"] = sum(item['subtotal_item'] for item in orcamento['itens'])
         session_state["orcamento_atual"] = orcamento
-
-        # A MÁGICA ESTÁ AQUI: a ferramenta retorna a próxima fala do bot
-        # Isso tira a responsabilidade do agente de "pensar" no que dizer.
-        return f"Adicionado: {quantidade} unidade(s) de '{descricao_produto}'. Seu subtotal agora é de R$ {orcamento['subtotal']:.2f}. Deseja adicionar mais algum item ou podemos finalizar o pedido?"
+        
+        return f"Adicionado: {int(quantidade)} unidade(s) de '{descricao_produto}'. Seu subtotal agora é de R$ {orcamento['subtotal']:.2f}. Deseja adicionar mais algum item ou podemos finalizar o pedido?"
 
     except Exception as e:
         print(f"Erro em criar_orcamento: {e}")
-        return f"Ocorreu um erro ao tentar adicionar o item: {e}. Por favor, tente novamente."
-
-@tool
-def atualizar_quantidade_item(codigo_do_produto: str, nova_quantidade: int) -> dict:
-    """
-    Atualiza a quantidade de um item que JÁ ESTÁ no orçamento.
-    Use se o cliente mudar de ideia sobre a quantidade de um item.
-    """
-    print(f"--- TOOL: Atualizando quantidade do item '{codigo_do_produto}' para '{nova_quantidade}'... ---")
-    orcamento = session_state.get("orcamento_atual")
-    if not orcamento or not orcamento["itens"]:
-        return {"erro": "Não há nenhum orçamento ativo para atualizar."}
-
-    item_encontrado = False
-    for item in orcamento["itens"]:
-        if str(item.get("codigo")) == str(codigo_do_produto):
-            item["quantidade"] = nova_quantidade
-            item["subtotal_item"] = item["preco_unitario"] * nova_quantidade
-            item_encontrado = True
-            break
-
-    if not item_encontrado:
-        return {"erro": f"O produto com código {codigo_do_produto} não foi encontrado no orçamento."}
-
-    orcamento["subtotal"] = sum(item['subtotal_item'] for item in orcamento['itens'])
-    session_state["orcamento_atual"] = orcamento
-    return orcamento
-
-@tool
-def remover_item_orcamento(codigo_do_produto: str) -> dict:
-    """Remove um item do orçamento atual com base no seu código."""
-    print(f"--- TOOL: Removendo item com código '{codigo_do_produto}' do orçamento... ---")
-    orcamento = session_state.get("orcamento_atual")
-    if not orcamento or not orcamento["itens"]:
-        return {"erro": "Não há nenhum orçamento ativo para remover itens."}
-    orcamento["itens"] = [item for item in orcamento["itens"] if item.get("codigo") != codigo_do_produto]
-    orcamento["subtotal"] = sum(item['subtotal_item'] for item in orcamento['itens'])
-    session_state["orcamento_atual"] = orcamento
-    return orcamento
+        return f"Ocorreu um erro ao tentar adicionar o item: {e}."
 
 @tool
 def finalizar_atendimento_e_passar_para_humano() -> str:
-    """Finaliza o atendimento e passa para um vendedor humano."""
-    print("--- TOOL: SINALIZANDO HANDOFF PARA VENDEDOR HUMANO ---")
+    """
+    Finaliza a cotação, informa o valor total para o cliente e passa para um vendedor humano.
+    Use esta ferramenta quando o cliente indicar que não quer mais adicionar itens.
+    """
+    print("--- TOOL: FINALIZANDO ATENDIMENTO E CALCULANDO TOTAL ---")
     orcamento_atual = session_state.get("orcamento_atual")
+    
     if not orcamento_atual or not orcamento_atual["itens"]:
-        return "Claro, mas não temos um orçamento ativo. Sobre quais produtos você gostaria de prosseguir?"
+        return "Claro, mas não temos um orçamento ativo para finalizar."
+    
+    # Pega o subtotal final do orçamento antes de limpá-lo
+    subtotal_final = orcamento_atual.get("subtotal", 0.0)
+    
+    # Limpa o orçamento para a próxima sessão
     session_state["orcamento_atual"] = None
-    session_state["ultimos_produtos_encontrados"] = []
-    return "Perfeito! Sua cotação está pronta. Vou apenas verificar os detalhes finais e um de nossos consultores já te retorna. Só um momento."
+    
+    # Retorna a mensagem final e correta para o agente
+    return f"Perfeito! Sua cotação está pronta. O valor total é de R$ {subtotal_final:.2f}. Vou apenas verificar os detalhes finais e um de nossos consultores já te retorna. Só um momento."
 
-@tool
-def get_info_geral(pergunta_sobre: str) -> str:
-    """Responde perguntas gerais sobre a empresa, como endereço ou horário de funcionamento."""
-    print(f"--- TOOL: Respondendo à pergunta sobre '{pergunta_sobre}'... ---")
-    pergunta_sobre = pergunta_sobre.lower()
-    if "endereço" in pergunta_sobre or "localização" in pergunta_sobre:
-        return "Nossa empresa fica na Av. Principal, 123, São Paulo, SP."
-    elif "horário" in pergunta_sobre or "funcionamento" in pergunta_sobre:
-        return "Nosso horário de funcionamento é de Segunda a Sexta, das 8h às 18h, e aos Sábados, das 8h às 12h."
-    else:
-        return "Não tenho essa informação, mas um de nossos atendentes pode ajudar."
-
-all_tools = [buscar_produtos, criar_orcamento, atualizar_quantidade_item, remover_item_orcamento, get_info_geral, finalizar_atendimento_e_passar_para_humano]
+all_tools = [buscar_produtos, criar_orcamento, finalizar_atendimento_e_passar_para_humano]

@@ -1,10 +1,12 @@
+# requirements.txt
+
+streamlit
 langchain
+langchain-core
 langchain-google-genai
 gspread
 python-dotenv
 langsmith
-streamlit
-pandas
-oauth2client
 thefuzz
 python-Levenshtein
+langgraph

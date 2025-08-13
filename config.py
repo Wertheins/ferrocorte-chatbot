@@ -1,53 +1,51 @@
-import gspread
+# config.py
 import streamlit as st
+import gspread
+import os
 from dotenv import load_dotenv
-import json
 from langchain_google_genai import ChatGoogleGenerativeAI
-import sys
+import json
 
+# Tenta carregar variáveis de ambiente de um arquivo .env (para desenvolvimento local)
 load_dotenv()
 
+# --- Lógica de Carregamento de Credenciais ---
+# Verifica se está rodando no ambiente do Streamlit Cloud
+if hasattr(st, 'secrets'):
+    # Carrega do Streamlit Secrets
+    print("Carregando credenciais do Streamlit Secrets...")
+    google_api_key = st.secrets["GOOGLE_API_KEY"]
+    # O TOML pode interpretar o JSON como uma string, então precisamos fazer o parse
+    google_sheets_credentials_str = st.secrets["GOOGLE_SHEETS_CREDENTIALS"]
+    google_sheets_credentials = json.loads(google_sheets_credentials_str)
+    
+else:
+    # Carrega de arquivos locais (para rodar na sua máquina)
+    print("Carregando credenciais de arquivos locais...")
+    google_api_key = os.getenv("GOOGLE_API_KEY")
+    google_sheets_credentials = 'credentials.json'
+
+# Seta a variável de ambiente para o LangChain
+os.environ["GOOGLE_API_KEY"] = google_api_key
+
+# --- Conexão com a Planilha e LLM ---
 try:
-    # A forma mais simples de saber se estamos rodando via Streamlit é verificar
-    # se 'streamlit' está no comando que iniciou o programa.
-    # 'streamlit' in sys.argv[0] verifica se o executável é o do Streamlit.
-    is_streamlit_running = any('streamlit' in arg for arg in sys.argv)
-
-    # Cenário 1: Rodando via Streamlit (seja localmente ou na nuvem)
-    if is_streamlit_running:
-        # Se estiver na nuvem, st.secrets terá 'gcp_creds'
-        if "gcp_creds" in st.secrets:
-            print("Conectando via Streamlit Secrets (Nuvem)...")
-            creds = st.secrets["gcp_creds"]
-            gc = gspread.service_account_from_dict(creds)
-        # Se estiver rodando localmente com 'streamlit run', usa o arquivo json
-        else:
-            print("Conectando via arquivo local 'credentials.json' (modo Streamlit)...")
-            gc = gspread.service_account(filename='credentials.json')
-
-    # Cenário 2: Rodando via 'python main.py'
-    else:
-        print("Conectando via arquivo local 'credentials.json' (modo Terminal)...")
-        gc = gspread.service_account(filename='credentials.json')
-
+    gc = gspread.service_account(credentials=google_sheets_credentials)
     spreadsheet = gc.open("Ferrocorte")
     worksheet = spreadsheet.worksheet("New Report")
-    print("Conexão com a planilha bem-sucedida.")
-
+    print("Conexão com a planilha 'Ferrocorte' e aba 'New Report' bem-sucedida.")
 except Exception as e:
-    error_message = f"Erro fatal ao conectar com o Google Sheets: {e}"
-    print(error_message)
-    # Tenta mostrar o erro no Streamlit se a biblioteca estiver disponível
-    try:
-        st.error(f"Erro de conexão com a base de dados: {e}. Verifique se o arquivo 'credentials.json' está na pasta correta ou se os Streamlit secrets estão configurados.")
-    except:
-        pass # Ignora se o st.error falhar (estamos no terminal)
+    print(f"Erro fatal ao conectar com o Google Sheets: {e}")
+    st.error(f"Erro ao conectar com o Google Sheets: {e}") # Mostra o erro na UI
     exit()
 
-# Adicionamos uma "área de preparação" para os produtos encontrados
+# A variável de sessão do Streamlit é diferente da nossa "session_state" do backend.
+# Esta continua sendo um dicionário simples para a lógica do backend.
 session_state = {
-    "orcamento_atual": None,
-    "ultimos_produtos_encontrados": [] # NOVA CHAVE
+    "orcamento_atual": None
 }
+
+# OBS: Removi 'ultimo_produto_isolado' pois não é mais usado na lógica final.
+# Manter o dicionário limpo ajuda a evitar confusão.
 
 llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0)
